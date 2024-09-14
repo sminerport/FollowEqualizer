@@ -1,0 +1,6 @@
+*/.vscode
+.git
+.env
+.vscode/*
+venv-follow/*
+__pycache__/
