@@ -4,3 +4,4 @@
 .vscode/*
 venv-follow/*
 __pycache__/
+*.code-workspace
