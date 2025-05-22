@@ -89,22 +89,29 @@ class NonFollowedFollowersFetchThread(QThread):
 
 
 class FollowBackThread(QThread):
-    # Signal to emit the count of users followed back when the process is complete
-    finished = pyqtSignal(int)  # Signal to emit the number of users followed
+    """Worker thread for following back users."""
 
-    def __init__(self, github_manager, followers, following):
+    # Signal to emit the count of users followed back when the process is complete
+    finished = pyqtSignal(int)
+
+    def __init__(self, github_manager, followers, following, exclude_list=None):
         super().__init__()
         self.github_manager = github_manager
         self.followers = followers
         self.following = following
+        self.exclude_list = exclude_list or []
 
     def run(self):
         # Convert to sets of usernames for easier comparison
         followers_set = set(user.login for user in self.followers)
         following_set = set(user.login for user in self.following)
 
-        # Find the followers you're not following back
-        to_follow_back = followers_set - following_set
+        # Find the followers you're not following back and aren't excluded
+        to_follow_back = [
+            login
+            for login in followers_set - following_set
+            if login not in set(self.exclude_list)
+        ]
 
         # Follow back each user
         followed_count = 0
@@ -543,9 +550,10 @@ class MainWindow(QMainWindow):
     def on_non_followed_users_fetched(self, users):
         self.to_follow_list.clear()  # Clear the list before adding new users
         for user in users:
-            self.to_follow_list.addItem(
-                user.login
-            )  # Add the user to the list in the UI
+            if user.login not in self.exclude_list:
+                self.to_follow_list.addItem(
+                    user.login
+                )  # Add the user to the list in the UI
         self.status_label.setText("Ready")
 
     def start_follow_back_thread(self):
@@ -560,7 +568,7 @@ class MainWindow(QMainWindow):
 
         # Create and start the worker thread
         self.follow_back_thread = FollowBackThread(
-            self.github_manager, followers, following
+            self.github_manager, followers, following, self.exclude_list
         )
         self.follow_back_thread.finished.connect(self.on_follow_back_complete)
         self.follow_back_thread.start()
@@ -571,6 +579,12 @@ class MainWindow(QMainWindow):
 
         # Update the UI with the number of users followed
         self.status_label.setText(f"Followed back {followed_count} users.")
+
+        QMessageBox.information(
+            self,
+            "Follow Back Success",
+            f"Successfully followed back {followed_count} users.",
+        )
 
         # Refresh the "to follow" list (optional)
         # self.update_follow_back_list()
