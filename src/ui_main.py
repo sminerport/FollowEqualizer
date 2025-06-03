@@ -99,6 +99,7 @@ class FollowBackThread(QThread):
         self.github_manager = github_manager
         self.followers = followers
         self.following = following
+        # list of usernames that should not be followed
         self.exclude_list = exclude_list or []
 
     def run(self):
@@ -597,6 +598,7 @@ class MainWindow(QMainWindow):
         )
 
         # Refresh counts and clear the follow-back list
+        # so the main window reflects the latest follow status
         self.github_manager.clear_internal_cache()
         following = self.github_manager.get_following()
         followers = self.github_manager.get_followers()

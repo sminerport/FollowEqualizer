@@ -1,3 +1,5 @@
+"""Unit tests for the automation helper functions."""
+
 import sys
 import types
 import unittest

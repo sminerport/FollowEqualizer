@@ -143,8 +143,8 @@ The tool leverages the GitHub API to retrieve and manage data. Some key function
 
 In addition to the GUI, you can automate follow management from the command line.
 The `src/automation.py` script exposes the same follow back and unfollow logic
-used in the desktop application. It reads your `GITHUB_TOKEN` from the `.env`
-file and accepts two optional flags:
+used in the desktop application. Install dependencies with `pip install -r requirements.txt` and
+ensure your `GITHUB_TOKEN` is available in a `.env` file. The script accepts two optional flags:
 
 ```bash
 python src/automation.py --follow-back --unfollow-nonfollowers

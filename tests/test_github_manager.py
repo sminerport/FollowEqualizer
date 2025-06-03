@@ -1,3 +1,5 @@
+"""Tests for the GitHubManager utility class."""
+
 import sys
 import types
 import unittest
