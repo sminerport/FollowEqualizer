@@ -37,7 +37,7 @@ def load_excludes(path: str):
     if not path:
         return []
     manager = GitHubManager("dummy")  # token not used for loading file
-    data = manager.load_exclude_list(path)Add commentMore actions
+    data = manager.load_exclude_list(path)
     return data.get("users", [])
 
 
