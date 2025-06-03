@@ -138,3 +138,25 @@ The tool leverages the GitHub API to retrieve and manage data. Some key function
 3. **Follow Back Non-Followed Followers**: Press this button to automatically follow back users who follow you but whom you are not following.
 4. **Find Repositories to Unstar**: Press the button to retrieve a list of starred repositories. You can then choose to unstar them.
 5. **Add to Exceptions**: Use this to add selected users or repositories to an exception list, preventing them from being unfollowed or unstarred.
+
+## Automation with CLI and GitHub Actions
+
+In addition to the GUI, you can automate follow management from the command line.
+The `src/automation.py` script exposes the same follow back and unfollow logic
+used in the desktop application. It reads your `GITHUB_TOKEN` from the `.env`
+file and accepts two optional flags:
+
+```bash
+python src/automation.py --follow-back --unfollow-nonfollowers
+```
+
+The script uses the `exclude_list.json` file to respect any users you have
+marked as exceptions.
+
+### Running in GitHub Actions
+
+A workflow is provided at `.github/workflows/automation.yml`. Configure a secret
+named `FOLLOW_EQUALIZER_TOKEN` in your repository settings and enable the
+workflow. It can be triggered manually from the Actions tab or automatically on a
+schedule (default runs daily at 09:00 UTC).
+
