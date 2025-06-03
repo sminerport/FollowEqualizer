@@ -36,9 +36,13 @@ def unfollow_nonfollowers(github_manager: GitHubManager, exclude_list):
 def load_excludes(path: str):
     if not path:
         return []
-    manager = GitHubManager("dummy")  # token not used for loading file
-    data = manager.load_exclude_list(path)
-    return data.get("users", [])
+    try:
+        with open(path, "r") as file:
+            data = json.load(file)
+        return data.get("users", [])
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"Error loading exclude list: {e}")
+        return []
 
 
 def main():
