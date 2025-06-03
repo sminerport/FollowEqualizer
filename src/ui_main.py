@@ -532,6 +532,16 @@ class MainWindow(QMainWindow):
             f"Successfully unfollowed {unfollowed_count} users who are not following you.",
         )
 
+        # Refresh counts and clear the non-followers list
+        self.github_manager.clear_internal_cache()
+        following = self.github_manager.get_following()
+        followers = self.github_manager.get_followers()
+
+        self.non_follower_list.clear()
+        self.non_follower_label.setText("Non-followers: 0")
+        self.total_following_label.setText(f"Following: {len(following)}")
+        self.total_followers_label.setText(f"Followers: {len(followers)}")
+
     def clear_non_followers_list(self):
         self.non_follower_list.clear()
 
@@ -585,6 +595,15 @@ class MainWindow(QMainWindow):
             "Follow Back Success",
             f"Successfully followed back {followed_count} users.",
         )
+
+        # Refresh counts and clear the follow-back list
+        self.github_manager.clear_internal_cache()
+        following = self.github_manager.get_following()
+        followers = self.github_manager.get_followers()
+
+        self.to_follow_list.clear()
+        self.total_following_label.setText(f"Following: {len(following)}")
+        self.total_followers_label.setText(f"Followers: {len(followers)}")
 
         # Refresh the "to follow" list (optional)
         # self.update_follow_back_list()
