@@ -3,6 +3,10 @@ import types
 import unittest
 import tempfile
 import os
+from pathlib import Path
+
+# Ensure the src directory is on the path for imports
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 # Provide a minimal fake 'github' module to allow importing GitHubManager
 class FakeUser:
@@ -10,16 +14,28 @@ class FakeUser:
         self.login = login
         self._following = []
         self._followers = []
+        self.unfollowed = []
+        self.followed = []
+
     def get_following(self):
         return self._following
+
     def get_followers(self):
         return self._followers
+
     def remove_from_following(self, user):
-        pass
+        self.unfollowed.append(user.login)
+        if user in self._following:
+            self._following.remove(user)
+
     def add_to_following(self, user):
-        pass
+        self.followed.append(user.login)
+        if user not in self._following:
+            self._following.append(user)
+
     def get_starred(self):
         return []
+
     def remove_from_starred(self, repo):
         pass
 
@@ -32,12 +48,19 @@ class FakeUser:
 class FakeGithub:
     def __init__(self, token):
         self._user = FakeUser("me")
-    def get_user(self):
-        return self._user
+        self._users = {"me": self._user}
+
+    def get_user(self, login=None):
+        if login is None:
+            return self._user
+        # Return existing or create new fake user
+        if login not in self._users:
+            self._users[login] = FakeUser(login)
+        return self._users[login]
 
 sys.modules['github'] = types.SimpleNamespace(Github=FakeGithub)
 
-from src.github_api import GitHubManager
+from github_api import GitHubManager
 
 class GitHubManagerTest(unittest.TestCase):
     def setUp(self):
