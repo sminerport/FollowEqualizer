@@ -92,11 +92,13 @@ class FollowBackThread(QThread):
     # Signal to emit the count of users followed back when the process is complete
     finished = pyqtSignal(int)  # Signal to emit the number of users followed
 
-    def __init__(self, github_manager, followers, following):
+    def __init__(self, github_manager, followers, following, exclude_list=None):
         super().__init__()
         self.github_manager = github_manager
         self.followers = followers
         self.following = following
+        # list of usernames that should not be followed
+        self.exclude_list = exclude_list or []
 
     def run(self):
         # Convert to sets of usernames for easier comparison
@@ -571,6 +573,22 @@ class MainWindow(QMainWindow):
 
         # Update the UI with the number of users followed
         self.status_label.setText(f"Followed back {followed_count} users.")
+
+        QMessageBox.information(
+            self,
+            "Follow Back Success",
+            f"Successfully followed back {followed_count} users.",
+        )
+
+        # Refresh counts and clear the follow-back list
+        # so the main window reflects the latest follow status
+        self.github_manager.clear_internal_cache()
+        following = self.github_manager.get_following()
+        followers = self.github_manager.get_followers()
+
+        self.to_follow_list.clear()
+        self.total_following_label.setText(f"Following: {len(following)}")
+        self.total_followers_label.setText(f"Followers: {len(followers)}")
 
         # Refresh the "to follow" list (optional)
         # self.update_follow_back_list()
