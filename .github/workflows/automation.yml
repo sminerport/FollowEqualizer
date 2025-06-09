@@ -12,8 +12,8 @@ on:
         required: false
         default: 'true'
   schedule:
-    # Run four times per day at midnight, 6 AM, noon, and 6 PM UTC
-    - cron: '0 */6 * * *'
+    # Run eight times per day at midnight, 3 AM, 6 AM, 9 AM, noon, 3 PM, 6 PM, and 9 PM UTC
+    - cron: '0 */3 * * *'
 
 jobs:
   run:
