@@ -83,7 +83,27 @@ class AutomationTest(unittest.TestCase):
         self.assertEqual(result.succeeded, ["Keep"])
         self.assertEqual(len(result.failed), 1)
         self.assertEqual(result.failed[0][0], "a")
+        self.assertIsNone(result.aborted)
         self.assertIn("failed to follow a", out)
+
+    def test_auth_or_rate_limit_error_aborts_the_run(self):
+        for status in (401, 403, 429):
+            with self.subTest(status=status):
+                self.manager.user.followed.clear()
+                self.manager.user.fail_on = {"a": status}
+                result, out, _ = quiet(follow_back, self.manager, [])
+                # "a" sorts first, fails fatally, and "Keep" is never attempted
+                self.assertEqual(self.manager.user.followed, [])
+                self.assertEqual([login for login, _ in result.failed], ["a"])
+                self.assertIn(f"HTTP {status}", result.aborted)
+                self.assertIn("1 user(s) not attempted", result.aborted)
+                self.assertIn("stopped after a", out)
+
+    def test_other_http_errors_do_not_abort(self):
+        self.manager.user.fail_on = {"a": 404}
+        result, _, _ = quiet(follow_back, self.manager, [])
+        self.assertEqual(self.manager.user.followed, ["Keep"])
+        self.assertIsNone(result.aborted)
 
 
 class LoadExcludesTest(unittest.TestCase):
@@ -107,6 +127,11 @@ class LoadExcludesTest(unittest.TestCase):
             path.write_text("{ not json")
             with self.assertRaises(ValueError):
                 quiet(load_excludes, path)
+
+    def test_unreadable_path_raises_value_error_not_oserror(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):  # a directory, not a file
+                quiet(load_excludes, tmp)
 
 
 class MainTest(unittest.TestCase):
@@ -141,6 +166,29 @@ class MainTest(unittest.TestCase):
         with self.assertRaises(SystemExit) as ctx:
             self.run_main("--exclude-file", str(self.exclude_path))
         self.assertEqual(ctx.exception.code, 2)
+
+    def test_dry_run_alone_previews_both_actions(self):
+        code, out, _ = self.run_main("--dry-run", "--exclude-file", str(self.exclude_path))
+        self.assertEqual(code, 0)
+        self.assertEqual(self.manager.user.followed, [])
+        self.assertEqual(self.manager.user.unfollowed, [])
+        self.assertIn("would follow a", out)
+        self.assertIn("would unfollow c", out)
+        summary = self.summary_path.read_text()
+        self.assertIn("### Followed back (dry run)", summary)
+        self.assertIn("### Unfollowed (dry run)", summary)
+
+    def test_directory_as_exclude_file_refuses_to_run(self):
+        code, _, err = self.run_main("--follow-back", "--exclude-file", self.tmp.name)
+        self.assertEqual(code, 2)
+        self.assertIn("Refusing to run", err)
+        self.assertEqual(self.manager.user.followed, [])
+
+    def test_fatal_error_is_reported_in_summary(self):
+        self.manager.user.fail_on = {"a": 403}
+        code, _, _ = self.run_main("--follow-back", "--exclude-file", str(self.exclude_path))
+        self.assertEqual(code, 1)
+        self.assertIn("**Run aborted**", self.summary_path.read_text())
 
     def test_missing_token_exits_2(self):
         with mock.patch.dict(os.environ, {"GITHUB_TOKEN": ""}):

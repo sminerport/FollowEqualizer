@@ -5,7 +5,9 @@ import types
 
 
 class FakeGithubException(Exception):
-    pass
+    def __init__(self, message, status=500):
+        super().__init__(message)
+        self.status = status
 
 
 class FakeUser:
@@ -15,8 +17,19 @@ class FakeUser:
         self._followers = []
         self.followed = []
         self.unfollowed = []
-        # logins whose follow / unfollow should raise, to exercise error handling
-        self.fail_on = set(fail_on)
+        # Logins whose follow / unfollow should raise, to exercise error handling.
+        # Either a set of logins (HTTP 500) or a {login: status} dict.
+        self.fail_on = fail_on
+
+    def _raise_if_failing(self, login):
+        if isinstance(self.fail_on, dict):
+            if login in self.fail_on:
+                raise FakeGithubException(
+                    f"simulated HTTP {self.fail_on[login]} for {login}",
+                    status=self.fail_on[login],
+                )
+        elif login in self.fail_on:
+            raise FakeGithubException(f"simulated API failure for {login}")
 
     def get_following(self):
         return list(self._following)
@@ -31,15 +44,13 @@ class FakeUser:
         pass
 
     def add_to_following(self, user):
-        if user.login in self.fail_on:
-            raise FakeGithubException(f"simulated API failure for {user.login}")
+        self._raise_if_failing(user.login)
         self.followed.append(user.login)
         if user not in self._following:
             self._following.append(user)
 
     def remove_from_following(self, user):
-        if user.login in self.fail_on:
-            raise FakeGithubException(f"simulated API failure for {user.login}")
+        self._raise_if_failing(user.login)
         self.unfollowed.append(user.login)
         if user in self._following:
             self._following.remove(user)

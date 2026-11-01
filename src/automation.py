@@ -16,9 +16,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
+from github import GithubException
 
 from exclusions import DEFAULT_EXCLUDE_PATH, PROJECT_ROOT, load_exclude_list
 from github_api import GitHubManager
+
+# HTTP statuses that mean every further request would fail the same way:
+# bad credentials / missing permission, forbidden or rate limited.
+FATAL_STATUSES = {401, 403, 429}
 
 
 @dataclass
@@ -29,6 +34,7 @@ class ActionResult:
     dry_run: bool
     succeeded: list = field(default_factory=list)  # logins acted on (or planned)
     failed: list = field(default_factory=list)  # (login, error message)
+    aborted: str | None = None  # set when the run stopped early, with the reason
 
     @property
     def title(self) -> str:
@@ -37,13 +43,13 @@ class ActionResult:
 
 def _apply(action: str, users, manager: GitHubManager, dry_run: bool) -> ActionResult:
     result = ActionResult(action=action, dry_run=dry_run)
-    verb = "follow" if action == "follow" else "unfollow"
     marker = "+" if action == "follow" else "-"
+    ordered = sorted(users, key=lambda u: u.login.lower())
 
-    for user in sorted(users, key=lambda u: u.login.lower()):
+    for index, user in enumerate(ordered):
         login = user.login
         if dry_run:
-            print(f"  [dry-run] would {verb} {login}")
+            print(f"  [dry-run] would {action} {login}")
             result.succeeded.append(login)
             continue
         try:
@@ -51,11 +57,20 @@ def _apply(action: str, users, manager: GitHubManager, dry_run: bool) -> ActionR
                 manager.follow(user)
             else:
                 manager.unfollow(user)
-        except Exception as exc:  # one bad user must not abort the whole run
-            print(f"  ! failed to {verb} {login}: {exc}")
+        except Exception as exc:  # one bad user must not abort the whole run...
             result.failed.append((login, str(exc)))
+            print(f"  ! failed to {action} {login}: {exc}")
+            # ...unless the error means every remaining request is doomed too.
+            if isinstance(exc, GithubException) and exc.status in FATAL_STATUSES:
+                remaining = len(ordered) - index - 1
+                result.aborted = (
+                    f"stopped after {login}: HTTP {exc.status}. Check the token's "
+                    f"permissions and the API rate limit. {remaining} user(s) not attempted."
+                )
+                print(f"  ! {result.aborted}")
+                break
         else:
-            print(f"  {marker} {verb}ed {login}")
+            print(f"  {marker} {action}ed {login}")
             result.succeeded.append(login)
     return result
 
@@ -115,6 +130,8 @@ def write_step_summary(results, path=None) -> None:
         if result.failed:
             lines.append(f"- Failed ({len(result.failed)}):")
             lines += [f"  - `{login}`: {error}" for login, error in result.failed]
+        if result.aborted:
+            lines.append(f"- **Run aborted**: {result.aborted}")
         lines.append("")
 
     with open(path, "a", encoding="utf-8") as fh:
@@ -136,7 +153,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Only print what would change; make no API writes",
+        help="Only print what would change; make no API writes. "
+        "On its own it previews both actions.",
     )
     parser.add_argument(
         "--exclude-file",
@@ -150,7 +168,11 @@ def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if not (args.follow_back or args.unfollow_nonfollowers):
-        parser.error("choose at least one of --follow-back / --unfollow-nonfollowers")
+        if args.dry_run:
+            # "Just show me everything" is the natural meaning of a bare --dry-run
+            args.follow_back = args.unfollow_nonfollowers = True
+        else:
+            parser.error("choose at least one of --follow-back / --unfollow-nonfollowers")
 
     load_dotenv(PROJECT_ROOT / ".env")
     token = os.getenv("GITHUB_TOKEN")

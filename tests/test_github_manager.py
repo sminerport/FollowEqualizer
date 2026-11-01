@@ -85,6 +85,11 @@ class ExclusionsTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 load_exclude_list(path)
 
+    def test_unreadable_path_raises_value_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):  # a directory, not a file
+                load_exclude_list(tmp)
+
     def test_wrong_shape_raises(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "ex.json"

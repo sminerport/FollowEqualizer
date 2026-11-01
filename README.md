@@ -174,13 +174,15 @@ python src/automation.py --follow-back --exclude-file my-list.json  # custom exc
 |---|---|
 | `--follow-back` | Follow users who follow you but whom you don't follow |
 | `--unfollow-nonfollowers` | Unfollow users who don't follow you back |
-| `--dry-run` | Print every user that *would* be affected, change nothing |
+| `--dry-run` | Print every user that *would* be affected, change nothing. On its own it previews both actions |
 | `--exclude-file PATH` | Exceptions file (default `exclude_list.json` at the repo root) |
 
 Every user acted on is printed by name, so the log is an audit trail. The script
 exits non-zero if any single follow/unfollow fails, but keeps going through the
-rest of the list. A malformed exceptions file aborts the run before anything is
-changed, and a missing one prints a warning.
+rest of the list, except on a 401, 403 or 429 response (bad token, missing
+permission or rate limit), where it stops immediately instead of repeating the
+same doomed request for every user. A malformed or unreadable exceptions file
+aborts the run before anything is changed, and a missing one prints a warning.
 
 ### Token
 

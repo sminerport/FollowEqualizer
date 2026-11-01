@@ -45,8 +45,8 @@ class NonFollowerFetchThread(QThread):
 
 
 class UnFollowthread(QThread):
-    # Signal to emit the count of users unfollowed once the process is complete
-    unfollow_complete = pyqtSignal(int)
+    # Emits (unfollowed_count, failed_count) once the process is complete
+    unfollow_complete = pyqtSignal(int, int)
 
     def __init__(self, github_manager, exclude_list):
         super().__init__()
@@ -57,29 +57,36 @@ class UnFollowthread(QThread):
         # Get non-followers from the manager
         non_followers = self.github_manager.get_non_followers(self.exclude_list)
 
-        # Count the number of users unfollowed
         unfollowed_count = 0
+        failed_count = 0
 
-        # Unfollow each non-follower
+        # Unfollow each non-follower. One API error must not kill the thread,
+        # otherwise the signal is never emitted and the button stays disabled.
         for user in non_followers:
-            self.github_manager.unfollow(user)
-            unfollowed_count += 1
+            try:
+                self.github_manager.unfollow(user)
+            except Exception as exc:
+                print(f"Failed to unfollow {user.login}: {exc}")
+                failed_count += 1
+            else:
+                unfollowed_count += 1
 
-        # Emit the signal with the unfollowed count
-        self.unfollow_complete.emit(unfollowed_count)
+        self.unfollow_complete.emit(unfollowed_count, failed_count)
 
 
 class NonFollowedFollowersFetchThread(QThread):
     finished = pyqtSignal(list)  # Signal to emit the list of non-followed followers
 
-    def __init__(self, github_manager):
+    def __init__(self, github_manager, exclude_list=None):
         super().__init__()
         self.github_manager = github_manager  # Store the GitHub manager for API calls
+        self.exclude_list = list(exclude_list or [])
 
     def run(self):
-        # Users who follow you but whom you are not following back
+        # Users who follow you but whom you are not following back, minus the
+        # exceptions, so the list shows exactly who "Follow Back" will act on.
         non_followed_followers = sorted(
-            self.github_manager.get_followers_not_followed(),
+            self.github_manager.get_followers_not_followed(self.exclude_list),
             key=lambda user: user.login.lower(),
         )
 
@@ -88,8 +95,8 @@ class NonFollowedFollowersFetchThread(QThread):
 
 
 class FollowBackThread(QThread):
-    # Emits (followed_count, skipped_count) when the process is complete
-    finished = pyqtSignal(int, int)
+    # Emits (followed_count, skipped_count, failed_count) when the process is complete
+    finished = pyqtSignal(int, int, int)
 
     def __init__(self, github_manager, exclude_list=None):
         super().__init__()
@@ -98,20 +105,24 @@ class FollowBackThread(QThread):
         self.exclude_list = list(exclude_list or [])
 
     def run(self):
-        # Everyone who follows you that you do not follow back
-        candidates = self.github_manager.get_followers_not_followed()
-        excluded = {name.lower() for name in self.exclude_list}
+        # Everyone who follows you that you do not follow back, with and
+        # without the exceptions applied; the difference is what we skip.
+        everyone = self.github_manager.get_followers_not_followed()
+        to_follow = self.github_manager.get_followers_not_followed(self.exclude_list)
+        skipped_count = len(everyone) - len(to_follow)
 
         followed_count = 0
-        skipped_count = 0
-        for user in candidates:
-            if user.login.lower() in excluded:
-                skipped_count += 1
-                continue
-            self.github_manager.follow(user)
-            followed_count += 1
+        failed_count = 0
+        for user in to_follow:
+            try:
+                self.github_manager.follow(user)
+            except Exception as exc:
+                print(f"Failed to follow {user.login}: {exc}")
+                failed_count += 1
+            else:
+                followed_count += 1
 
-        self.finished.emit(followed_count, skipped_count)
+        self.finished.emit(followed_count, skipped_count, failed_count)
 
 
 class RepoFetchWorkerThread(QThread):
@@ -166,6 +177,17 @@ class MainWindow(QMainWindow):
         except ValueError as exc:
             saved = {"users": [], "repos": []}
             load_error = str(exc)
+            # Move the broken file aside so the next save cannot overwrite it
+            # and the user can repair it by hand.
+            backup = self.exclude_path.with_name(self.exclude_path.name + ".invalid")
+            try:
+                self.exclude_path.replace(backup)
+                load_error += (
+                    f"\n\nThe file was moved to {backup.name} so nothing is lost. "
+                    "The exceptions list starts empty."
+                )
+            except OSError as move_error:
+                load_error += f"\n\nCould not move it aside ({move_error})."
         self.exclude_list = list(saved["users"])  # List of users to exclude
         self.repo_exclude_list = list(saved["repos"])
         self.non_followers = []  # Store non-followers to use in search functionality
@@ -528,19 +550,19 @@ class MainWindow(QMainWindow):
         )
         self.unfollow_non_followers_worker.start()
 
-    def on_unfollow_complete(self, unfollowed_count):
+    def on_unfollow_complete(self, unfollowed_count, failed_count=0):
         # Re-enable the button after unfollowing is complete
         self.unfollow_button.setEnabled(True)
 
         # Update the status label to "Ready"
         self.status_label.setText("Ready")
 
-        # Show a message box with the unfollow success message
-        QMessageBox.information(
-            self,
-            "Unfollow Success",
-            f"Successfully unfollowed {unfollowed_count} users who are not following you.",
+        message = (
+            f"Successfully unfollowed {unfollowed_count} users who are not following you."
         )
+        if failed_count:
+            message += f"\n{failed_count} unfollow(s) failed; see the console for details."
+        QMessageBox.information(self, "Unfollow Success", message)
 
     def clear_non_followers_list(self):
         self.non_follower_list.clear()
@@ -553,7 +575,9 @@ class MainWindow(QMainWindow):
 
     def start_non_followed_followers_thread(self):
         self.status_label.setText("Retrieving Non-Followed Followers...")
-        self.worker_thread = NonFollowedFollowersFetchThread(self.github_manager)
+        self.worker_thread = NonFollowedFollowersFetchThread(
+            self.github_manager, self.exclude_list
+        )
         self.worker_thread.finished.connect(self.on_non_followed_users_fetched)
         self.worker_thread.start()
 
@@ -578,7 +602,7 @@ class MainWindow(QMainWindow):
         self.follow_back_thread.finished.connect(self.on_follow_back_complete)
         self.follow_back_thread.start()
 
-    def on_follow_back_complete(self, followed_count, skipped_count=0):
+    def on_follow_back_complete(self, followed_count, skipped_count=0, failed_count=0):
         # Re-enable the button after the operation is complete
         self.follow_back_button.setEnabled(True)
 
@@ -588,6 +612,8 @@ class MainWindow(QMainWindow):
         message = f"Successfully followed back {followed_count} users."
         if skipped_count:
             message += f"\nSkipped {skipped_count} user(s) on the exceptions list."
+        if failed_count:
+            message += f"\n{failed_count} follow(s) failed; see the console for details."
         QMessageBox.information(self, "Follow Back Success", message)
 
         # Refresh counts and clear the follow-back list

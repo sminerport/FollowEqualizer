@@ -34,6 +34,8 @@ def load_exclude_list(path=DEFAULT_EXCLUDE_PATH) -> dict:
             data = json.load(fh)
     except json.JSONDecodeError as exc:
         raise ValueError(f"{path} is not valid JSON: {exc}") from exc
+    except OSError as exc:  # a directory, permission denied, ...
+        raise ValueError(f"{path} could not be read: {exc}") from exc
 
     if not isinstance(data, dict):
         raise ValueError(
