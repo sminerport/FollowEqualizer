@@ -103,9 +103,9 @@ The tool leverages the GitHub API to retrieve and manage data. Some key function
 ## Setup and Installation
 
 ### Prerequisites
-- [Python 3.10.0](https://www.python.org/downloads/release/python-3100/)
-- [PyQt5](https://pypi.org/project/PyQt5/)
-- [PyGithub](https://pypi.org/project/PyGithub/)
+- [Python 3.10 or newer](https://www.python.org/downloads/) (3.12 recommended, see `.python-version`)
+- [PyGithub](https://pypi.org/project/PyGithub/) (CLI and GUI)
+- [PyQt5](https://pypi.org/project/PyQt5/) (GUI only)
 
 ### Steps
 
@@ -114,9 +114,10 @@ The tool leverages the GitHub API to retrieve and manage data. Some key function
    git clone https://github.com/sminerport/FollowEqualizer.git
    ```
 
-2. Install dependencies:
+2. Install dependencies (the GUI file pulls in the CLI dependencies too):
    ```bash
-   pip install -r requirements.txt
+   pip install -r requirements-gui.txt   # desktop GUI
+   pip install -r requirements.txt       # CLI / automation only
    ```
 
 3. Set up your GitHub token:
@@ -137,26 +138,97 @@ The tool leverages the GitHub API to retrieve and manage data. Some key function
 2. **Unfollow Non-Followers**: Use this option to unfollow non-followers. Exceptions can be applied to exclude specific users.
 3. **Follow Back Non-Followed Followers**: Press this button to automatically follow back users who follow you but whom you are not following.
 4. **Find Repositories to Unstar**: Press the button to retrieve a list of starred repositories. You can then choose to unstar them.
-5. **Add to Exceptions**: Use this to add selected users or repositories to an exception list, preventing them from being unfollowed or unstarred.
+5. **Add to Exceptions**: Use this to add selected users or repositories to an exception list, preventing them from being unfollowed, followed back, or unstarred.
+
+### Exceptions are saved to `exclude_list.json`
+
+Every change to the Exceptions list in the GUI is written to `exclude_list.json`
+at the repository root, and the list is loaded again when the app starts. The
+CLI and the GitHub Actions workflow read the same file, so the people you protect
+in the desktop app are protected by the automation too. **Commit the file after
+you change it**, otherwise the workflow (which checks out the repository) will
+not see your exceptions.
+
+```json
+{
+    "users": ["someone-you-want-to-keep-following"],
+    "repos": ["owner/repo-you-want-to-keep-starred"]
+}
+```
 
 ## Automation with CLI and GitHub Actions
 
 In addition to the GUI, you can automate follow management from the command line.
 The `src/automation.py` script exposes the same follow back and unfollow logic
 used in the desktop application. Install dependencies with `pip install -r requirements.txt` and
-ensure your `GITHUB_TOKEN` is available in a `.env` file. The script accepts two optional flags:
+ensure your `GITHUB_TOKEN` is available in a `.env` file.
 
 ```bash
-python src/automation.py --follow-back --unfollow-nonfollowers
+python src/automation.py --follow-back                              # follow back
+python src/automation.py --unfollow-nonfollowers --dry-run          # preview only
+python src/automation.py --follow-back --unfollow-nonfollowers      # both
+python src/automation.py --follow-back --exclude-file my-list.json  # custom exceptions file
 ```
 
-The script uses the `exclude_list.json` file to respect any users you have
-marked as exceptions.
+| Flag | Effect |
+|---|---|
+| `--follow-back` | Follow users who follow you but whom you don't follow |
+| `--unfollow-nonfollowers` | Unfollow users who don't follow you back |
+| `--dry-run` | Print every user that *would* be affected, change nothing. On its own it previews both actions |
+| `--exclude-file PATH` | Exceptions file (default `exclude_list.json` at the repo root) |
+
+Every user acted on is printed by name, so the log is an audit trail. The script
+exits non-zero if any single follow/unfollow fails, but keeps going through the
+rest of the list, except on a 401, 403 or 429 response (bad token, missing
+permission or rate limit), where it stops immediately instead of repeating the
+same doomed request for every user. A malformed or unreadable exceptions file
+aborts the run before anything is changed, and a missing one prints a warning.
+
+### Token
+
+The token in `.env` (locally) or in the `FOLLOW_EQUALIZER_TOKEN` secret (GitHub
+Actions) must be allowed to change who you follow:
+
+- Fine-grained personal access token: account permission **Followers: Read and write**.
+- Classic personal access token: the `user:follow` scope.
+
+Fine-grained tokens expire, so renew the secret when GitHub emails you.
 
 ### Running in GitHub Actions
 
-A workflow is provided at `.github/workflows/automation.yml`. Configure a secret
-named `FOLLOW_EQUALIZER_TOKEN` in your repository settings and enable the
-workflow. It can be triggered manually from the Actions tab or automatically on a
-schedule (default runs daily at 09:00 UTC).
+The workflow at `.github/workflows/automation.yml`:
+
+- **Runs daily at 09:00 UTC and only follows back.** Unfollowing is destructive, so
+  it is off by default on the schedule. To include it in scheduled runs, add a
+  repository variable `SCHEDULE_UNFOLLOW` with the value `true`
+  (Settings → Secrets and variables → Actions → Variables).
+- **Manual runs** from the Actions tab let you tick *follow back*, *unfollow
+  non-followers* and *dry run* individually. A dry run is the safe way to see
+  what the automation would do.
+- Writes a summary of every user followed or unfollowed to the job summary page.
+- Re-enables itself on every run. GitHub otherwise turns off scheduled workflows
+  after 60 days without a commit to the repository.
+
+Setup:
+
+1. Add the secret `FOLLOW_EQUALIZER_TOKEN` under Settings → Secrets and variables → Actions.
+2. Commit your `exclude_list.json`.
+3. If the workflow shows as disabled in the Actions tab, enable it:
+   ```bash
+   gh workflow enable automation.yml
+   ```
+4. Do a manual *dry run* first from the Actions tab and read the summary.
+
+A second workflow, `.github/workflows/tests.yml`, runs the unit tests on every
+push and pull request on Python 3.10, 3.12 and 3.13.
+
+## Development
+
+```bash
+pip install -r requirements.txt
+python -m unittest discover -s tests -v
+```
+
+The tests use in-memory fakes for the GitHub API, so they need no token and make
+no network calls.
 

@@ -1,0 +1,36 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, dev, prod]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install CLI dependencies
+        run: pip install -r requirements.txt
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: CLI imports with the real dependencies
+        run: python src/automation.py --help
+
+      - name: exclude_list.json is valid
+        run: python -c "import sys; sys.path.insert(0, 'src'); from exclusions import load_exclude_list; print(load_exclude_list('exclude_list.json'))"
