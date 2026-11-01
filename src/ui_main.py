@@ -15,7 +15,9 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QItemSelection
-from github_api import GitHubManager
+from pathlib import Path
+
+from exclusions import DEFAULT_EXCLUDE_PATH, load_exclude_list, save_exclude_list
 
 
 class NonFollowerFetchThread(QThread):
@@ -75,48 +77,41 @@ class NonFollowedFollowersFetchThread(QThread):
         self.github_manager = github_manager  # Store the GitHub manager for API calls
 
     def run(self):
-        # Fetch followers and following lists
-        followers = self.github_manager.get_followers()
-        following = self.github_manager.get_following()
-
-        # Find users who follow you but whom you are not following back
-        non_followed_followers = [
-            f for f in followers if f.login not in {u.login for u in following}
-        ]
+        # Users who follow you but whom you are not following back
+        non_followed_followers = sorted(
+            self.github_manager.get_followers_not_followed(),
+            key=lambda user: user.login.lower(),
+        )
 
         # Emit the results when done
         self.finished.emit(non_followed_followers)
 
 
 class FollowBackThread(QThread):
-    # Signal to emit the count of users followed back when the process is complete
-    finished = pyqtSignal(int)  # Signal to emit the number of users followed
+    # Emits (followed_count, skipped_count) when the process is complete
+    finished = pyqtSignal(int, int)
 
-    def __init__(self, github_manager, followers, following, exclude_list=None):
+    def __init__(self, github_manager, exclude_list=None):
         super().__init__()
         self.github_manager = github_manager
-        self.followers = followers
-        self.following = following
         # list of usernames that should not be followed
-        self.exclude_list = exclude_list or []
+        self.exclude_list = list(exclude_list or [])
 
     def run(self):
-        # Convert to sets of usernames for easier comparison
-        followers_set = set(user.login for user in self.followers)
-        following_set = set(user.login for user in self.following)
+        # Everyone who follows you that you do not follow back
+        candidates = self.github_manager.get_followers_not_followed()
+        excluded = {name.lower() for name in self.exclude_list}
 
-        # Find the followers you're not following back
-        to_follow_back = followers_set - following_set
-
-        # Follow back each user
         followed_count = 0
-        for user_login in to_follow_back:
-            user = self.github_manager.g.get_user(user_login)
+        skipped_count = 0
+        for user in candidates:
+            if user.login.lower() in excluded:
+                skipped_count += 1
+                continue
             self.github_manager.follow(user)
             followed_count += 1
 
-        # Emit the number of users followed back
-        self.finished.emit(followed_count)
+        self.finished.emit(followed_count, skipped_count)
 
 
 class RepoFetchWorkerThread(QThread):
@@ -158,13 +153,33 @@ class UnstarReposWorkerThread(QThread):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, github_manager):
+    def __init__(self, github_manager, exclude_path=DEFAULT_EXCLUDE_PATH):
         super().__init__()
         self.github_manager = github_manager
-        self.exclude_list = []  # List of users to exclude
-        self.repo_exclude_list = []
+        self.exclude_path = Path(exclude_path)
+
+        # Exceptions are persisted to exclude_list.json so the CLI and the
+        # GitHub Actions workflow honour the same list as the desktop app.
+        try:
+            saved = load_exclude_list(self.exclude_path)
+            load_error = None
+        except ValueError as exc:
+            saved = {"users": [], "repos": []}
+            load_error = str(exc)
+        self.exclude_list = list(saved["users"])  # List of users to exclude
+        self.repo_exclude_list = list(saved["repos"])
         self.non_followers = []  # Store non-followers to use in search functionality
         self.init_ui()
+        self._refresh_exceptions_box()
+
+        if load_error:
+            QMessageBox.warning(self, "Exceptions not loaded", load_error)
+        else:
+            self.status_label.setText(
+                f"Ready. Loaded {len(self.exclude_list)} user and "
+                f"{len(self.repo_exclude_list)} repo exception(s) "
+                f"from {self.exclude_path.name}"
+            )
 
     def init_ui(self):
         self.setWindowTitle("FollowEqualizer")
@@ -556,29 +571,24 @@ class MainWindow(QMainWindow):
         # Disable the button while following users
         self.follow_back_button.setEnabled(False)
 
-        # Get followers and following lists
-        followers = self.github_manager.get_followers()
-        following = self.github_manager.get_following()
-
-        # Create and start the worker thread
+        # Create and start the worker thread (users on the exceptions list are skipped)
         self.follow_back_thread = FollowBackThread(
-            self.github_manager, followers, following
+            self.github_manager, self.exclude_list
         )
         self.follow_back_thread.finished.connect(self.on_follow_back_complete)
         self.follow_back_thread.start()
 
-    def on_follow_back_complete(self, followed_count):
+    def on_follow_back_complete(self, followed_count, skipped_count=0):
         # Re-enable the button after the operation is complete
         self.follow_back_button.setEnabled(True)
 
         # Update the UI with the number of users followed
         self.status_label.setText(f"Followed back {followed_count} users.")
 
-        QMessageBox.information(
-            self,
-            "Follow Back Success",
-            f"Successfully followed back {followed_count} users.",
-        )
+        message = f"Successfully followed back {followed_count} users."
+        if skipped_count:
+            message += f"\nSkipped {skipped_count} user(s) on the exceptions list."
+        QMessageBox.information(self, "Follow Back Success", message)
 
         # Refresh counts and clear the follow-back list
         # so the main window reflects the latest follow status
@@ -643,6 +653,8 @@ class MainWindow(QMainWindow):
             if repo_name not in self.repo_exclude_list:
                 self.repo_exclude_list.append(repo_name)
                 self.exclude_list_box.addItem(repo_name)  # Add to exceptions display
+        if selected_repos:
+            self._save_exceptions()
 
         # Start the unstar process for all repositories except the selected ones
         self.unstar_repo_worker_thread = UnstarReposWorkerThread(
@@ -654,9 +666,9 @@ class MainWindow(QMainWindow):
     def on_repos_unstarred(self, unstarred_count):
         self.status_label.setText(f"Unstarred {unstarred_count} repositories.")
 
-        # Refresh the repo list after unstarring
+        # Refresh the repo list after unstarring. Exceptions are kept (and saved
+        # to exclude_list.json) so they stay protected on the next run.
         self.start_find_repos_to_unstar_thread()
-        self.clear_all_exceptions()
 
     def clear_all_listbox_selections(self):
         self.non_follower_list.clearSelection()  # Clear selection from non-followers list
@@ -696,25 +708,58 @@ class MainWindow(QMainWindow):
                 self.exclude_list.append(username)
                 self.exclude_list_box.addItem(username)  # Add user to exceptions list
 
-        # Update the selected count after adding
+        # Update the selected count after adding, then persist the list
         self.update_selected_count()
-
-        # Clear the selection from all list boxes
+        self._save_exceptions()
 
     def remove_selected_exception(self):
         selected_items = self.exclude_list_box.selectedItems()
-        if selected_items:
-            for item in selected_items:
-                self.exclude_list.remove(item.text())  # Remove from the exclude list
-                self.exclude_list_box.takeItem(
-                    self.exclude_list_box.row(item)
-                )  # Remove from the list box
+        if not selected_items:
+            return
+        for item in selected_items:
+            name = item.text()
+            # An exception is either a username or an "owner/repo" full name
+            if name in self.exclude_list:
+                self.exclude_list.remove(name)
+            if name in self.repo_exclude_list:
+                self.repo_exclude_list.remove(name)
+            self.exclude_list_box.takeItem(self.exclude_list_box.row(item))
+        self._save_exceptions()
 
     def clear_all_exceptions(self):
+        total = len(self.exclude_list) + len(self.repo_exclude_list)
+        if not total:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Clear All Exceptions",
+            f"Remove all {total} exception(s) from {self.exclude_path.name}?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
         self.exclude_list.clear()
         self.repo_exclude_list.clear()
         self.non_followers.clear()
         self.exclude_list_box.clear()
+        self._save_exceptions()
+
+    def _refresh_exceptions_box(self):
+        self.exclude_list_box.clear()
+        self.exclude_list_box.addItems(self.exclude_list)
+        self.exclude_list_box.addItems(self.repo_exclude_list)
+
+    def _save_exceptions(self):
+        try:
+            save_exclude_list(
+                {"users": self.exclude_list, "repos": self.repo_exclude_list},
+                self.exclude_path,
+            )
+        except OSError as exc:
+            QMessageBox.warning(
+                self, "Could not save exceptions", f"{self.exclude_path}: {exc}"
+            )
 
     def update_selected_count(self):
         # Count selected items from each list

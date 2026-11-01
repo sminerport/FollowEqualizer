@@ -1,44 +1,83 @@
 name: FollowEqualizer Automation
 
+# Scheduled runs only FOLLOW BACK. Unfollowing is destructive, so it only runs
+# when you ask for it: trigger the workflow manually and tick the box, or set a
+# repository variable SCHEDULE_UNFOLLOW=true to include it in scheduled runs.
+# Exceptions come from exclude_list.json at the repo root (commit it!).
 on:
-  push:
-    branches: [dev, main, prod]
-  pull_request:
-    branches: [dev, main, prod]
   workflow_dispatch:
     inputs:
       follow_back:
-        description: 'Run follow back action'
-        required: false
-        default: 'true'
+        description: Follow back users who follow you
+        type: boolean
+        default: true
       unfollow_nonfollowers:
-        description: 'Run unfollow nonfollowers action'
-        required: false
-        default: 'true'
+        description: Unfollow users who do not follow you back (destructive)
+        type: boolean
+        default: false
+      dry_run:
+        description: Only report what would change, make no changes
+        type: boolean
+        default: false
   schedule:
-    # Run eight times per day at midnight, 3 AM, 6 AM, 9 AM, noon, 3 PM, 6 PM, and 9 PM UTC
-    - cron: '0 */3 * * *'
+    - cron: '0 9 * * *'  # daily at 09:00 UTC
+
+permissions:
+  contents: read
+  actions: write  # lets the keepalive step re-enable this workflow
+
+concurrency:
+  group: follow-equalizer
+  cancel-in-progress: false
 
 jobs:
   run:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
-          # Use the same Python version as the project
-          python-version: '3.10.17'
+          python-version-file: .python-version
+          cache: pip
+
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Execute automation actions
+
+      - name: Run FollowEqualizer
         env:
           GITHUB_TOKEN: ${{ secrets.FOLLOW_EQUALIZER_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_FOLLOW_BACK: ${{ inputs.follow_back }}
+          INPUT_UNFOLLOW: ${{ inputs.unfollow_nonfollowers }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          SCHEDULE_UNFOLLOW: ${{ vars.SCHEDULE_UNFOLLOW }}
         run: |
-          args=""
-          if [ "${{ github.event.inputs.follow_back }}" != "false" ]; then
-            args="$args --follow-back"
+          set -euo pipefail
+          args=()
+          if [ "$EVENT_NAME" = "schedule" ]; then
+            args+=(--follow-back)
+            if [ "${SCHEDULE_UNFOLLOW:-false}" = "true" ]; then
+              args+=(--unfollow-nonfollowers)
+            fi
+          else
+            if [ "$INPUT_FOLLOW_BACK" = "true" ]; then
+              args+=(--follow-back)
+            fi
+            if [ "$INPUT_UNFOLLOW" = "true" ]; then
+              args+=(--unfollow-nonfollowers)
+            fi
+            if [ "$INPUT_DRY_RUN" = "true" ]; then
+              args+=(--dry-run)
+            fi
           fi
-          if [ "${{ github.event.inputs.unfollow_nonfollowers }}" != "false" ]; then
-            args="$args --unfollow-nonfollowers"
-          fi
-          python src/automation.py $args
+          echo "Running: python src/automation.py ${args[*]}"
+          python src/automation.py "${args[@]}"
+
+      # GitHub disables cron workflows after 60 days without commits. Calling the
+      # "enable workflow" endpoint on every run resets that clock.
+      - name: Keep the schedule alive
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/automation.yml/enable"
