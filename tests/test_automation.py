@@ -203,6 +203,24 @@ class MainTest(unittest.TestCase):
         self.assertIn("Refusing to run", err)
         self.assertEqual(self.manager.user.unfollowed, [])
 
+    def test_bad_credentials_explain_instead_of_traceback(self):
+        # What a run with an expired FOLLOW_EQUALIZER_TOKEN secret looks like
+        self.manager.user.fail_fetch = (401, "Bad credentials")
+        code, _, err = self.run_main("--follow-back", "--exclude-file", str(self.exclude_path))
+        self.assertEqual(code, 2)
+        self.assertIn("HTTP 401 (Bad credentials)", err)
+        self.assertIn("FOLLOW_EQUALIZER_TOKEN", err)
+        self.assertNotIn("Traceback", err)
+        summary = self.summary_path.read_text()
+        self.assertIn("**Run failed**", summary)
+        self.assertIn("HTTP 401", summary)
+
+    def test_other_api_error_while_fetching_is_reported(self):
+        self.manager.user.fail_fetch = (502, "Server Error")
+        code, _, err = self.run_main("--follow-back", "--exclude-file", str(self.exclude_path))
+        self.assertEqual(code, 2)
+        self.assertIn("HTTP 502 (Server Error)", err)
+
     def test_both_actions_apply_exclusions_and_write_summary(self):
         code, _, _ = self.run_main(
             "--follow-back",

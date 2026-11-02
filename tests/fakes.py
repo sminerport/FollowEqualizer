@@ -5,9 +5,12 @@ import types
 
 
 class FakeGithubException(Exception):
-    def __init__(self, message, status=500):
+    """Mirrors the PyGithub attributes the code relies on: .status and .data."""
+
+    def __init__(self, message, status=500, data=None):
         super().__init__(message)
         self.status = status
+        self.data = {"message": message} if data is None else data
 
 
 class FakeUser:
@@ -20,6 +23,9 @@ class FakeUser:
         # Logins whose follow / unfollow should raise, to exercise error handling.
         # Either a set of logins (HTTP 500) or a {login: status} dict.
         self.fail_on = fail_on
+        # (status, message) to raise when the follower / following lists are
+        # fetched, e.g. (401, "Bad credentials") for an expired token.
+        self.fail_fetch = None
 
     def _raise_if_failing(self, login):
         if isinstance(self.fail_on, dict):
@@ -31,10 +37,17 @@ class FakeUser:
         elif login in self.fail_on:
             raise FakeGithubException(f"simulated API failure for {login}")
 
+    def _raise_if_fetch_fails(self):
+        if self.fail_fetch:
+            status, message = self.fail_fetch
+            raise FakeGithubException(message, status=status)
+
     def get_following(self):
+        self._raise_if_fetch_fails()
         return list(self._following)
 
     def get_followers(self):
+        self._raise_if_fetch_fails()
         return list(self._followers)
 
     def get_starred(self):

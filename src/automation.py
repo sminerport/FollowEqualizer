@@ -41,6 +41,26 @@ class ActionResult:
         return {"follow": "Followed back", "unfollow": "Unfollowed"}[self.action]
 
 
+def describe_api_error(exc: GithubException) -> str:
+    """Human-readable explanation of a GitHub API error, with a hint on how to fix it."""
+    hints = {
+        401: (
+            "GitHub rejected the token (expired or revoked). Create a new personal "
+            "access token with the 'Followers: read and write' permission and update "
+            "the FOLLOW_EQUALIZER_TOKEN secret (locally: GITHUB_TOKEN in .env)."
+        ),
+        403: (
+            "the token is not allowed to do this, or the API rate limit was hit. Check "
+            "that the token has 'Followers: read and write' and try again later."
+        ),
+        429: "the GitHub API rate limit was hit; try again later.",
+    }
+    detail = exc.data.get("message") if isinstance(exc.data, dict) else exc.data
+    text = f"HTTP {exc.status}" + (f" ({detail})" if detail else "")
+    hint = hints.get(exc.status)
+    return f"{text}: {hint}" if hint else text
+
+
 def _apply(action: str, users, manager: GitHubManager, dry_run: bool) -> ActionResult:
     result = ActionResult(action=action, dry_run=dry_run)
     marker = "+" if action == "follow" else "-"
@@ -64,8 +84,8 @@ def _apply(action: str, users, manager: GitHubManager, dry_run: bool) -> ActionR
             if isinstance(exc, GithubException) and exc.status in FATAL_STATUSES:
                 remaining = len(ordered) - index - 1
                 result.aborted = (
-                    f"stopped after {login}: HTTP {exc.status}. Check the token's "
-                    f"permissions and the API rate limit. {remaining} user(s) not attempted."
+                    f"stopped after {login}: {describe_api_error(exc)} "
+                    f"{remaining} user(s) not attempted."
                 )
                 print(f"  ! {result.aborted}")
                 break
@@ -109,13 +129,15 @@ def load_excludes(path) -> list:
     return users
 
 
-def write_step_summary(results, path=None) -> None:
+def write_step_summary(results, path=None, error=None) -> None:
     """Append a Markdown report to the GitHub Actions job summary, if available."""
     path = path or os.environ.get("GITHUB_STEP_SUMMARY")
     if not path:
         return
 
     lines = ["## FollowEqualizer run", ""]
+    if error:
+        lines += [f"**Run failed**: {error}", ""]
     for result in results:
         lines.append(f"### {result.title}{' (dry run)' if result.dry_run else ''}")
         lines.append("")
@@ -195,10 +217,18 @@ def main(argv=None) -> int:
 
     manager = GitHubManager(token)
     results = []
-    if args.follow_back:
-        results.append(follow_back(manager, exclude, args.dry_run))
-    if args.unfollow_nonfollowers:
-        results.append(unfollow_nonfollowers(manager, exclude, args.dry_run))
+    try:
+        if args.follow_back:
+            results.append(follow_back(manager, exclude, args.dry_run))
+        if args.unfollow_nonfollowers:
+            results.append(unfollow_nonfollowers(manager, exclude, args.dry_run))
+    except GithubException as exc:
+        # Fetching the follower / following lists failed (per-user errors are
+        # handled inside _apply). Explain it instead of dumping a traceback.
+        error = describe_api_error(exc)
+        print(f"GitHub API error: {error}", file=sys.stderr)
+        write_step_summary(results, error=error)
+        return 2
 
     write_step_summary(results)
 
