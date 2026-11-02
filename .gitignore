@@ -7,3 +7,5 @@ __pycache__/
 *.code-workspace
 .venv/
 venv/
+.claude/
+.claude.local.md
