@@ -14,8 +14,9 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Branch or tag to run (default main; use dev to test unpromoted code)
-        type: string
+        description: Branch to run (main = promoted code; dev = preview unpromoted code)
+        type: choice
+        options: [main, dev]   # fixed list, this job holds the account token
         default: main
       follow_back:
         description: Follow back users who follow you
