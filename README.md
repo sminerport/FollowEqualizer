@@ -219,9 +219,10 @@ Setup:
    ```
 4. Do a manual *dry run* first from the Actions tab and read the summary.
 
-A second workflow, `.github/workflows/tests.yml`, runs the unit tests on every
-push and pull request on Python 3.10, 3.12 and 3.13. Its "Tests passed" job is
-the check the `dev` and `main` rulesets require before a PR can merge.
+A second workflow, `.github/workflows/tests.yml`, runs the unit tests on Python
+3.10, 3.12 and 3.13 for every pull request targeting `dev` or `main` and every
+push to those branches (plus manual dispatch). Its "Tests passed" job is the
+check the `dev` and `main` rulesets require before a PR can merge.
 
 ## Development
 
