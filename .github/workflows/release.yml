@@ -62,10 +62,13 @@ jobs:
           mkdir -p dist
           git archive --format=zip --prefix="FollowEqualizer-$TAG/" \
             -o "dist/FollowEqualizer-$TAG.zip" HEAD
+          # The checked-out commit, not $GITHUB_SHA: on a manual rebuild that is
+          # the dispatch ref's tip, and for annotated tags it is the tag object.
+          commit=$(git rev-parse HEAD)
           cd dist
           sha256sum "FollowEqualizer-$TAG.zip" > SHA256SUMS.txt
           {
-            echo "Commit: $GITHUB_SHA"
+            echo "Commit: $commit"
             echo "Tag: $TAG"
             echo "Runner image: ${ImageOS:-} ${ImageVersion:-}"
             echo "Python: $(python --version)"
