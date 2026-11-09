@@ -1,0 +1,83 @@
+# Release pipeline. Trigger: pushing an annotated tag vX.Y.Z whose commit sits on
+# main. The run re-runs the test suite, packages the source tree, and attaches
+# the zip + checksums to a DRAFT GitHub Release. Publishing the draft (Releases
+# page button or `gh release edit vX.Y.Z --draft=false`) is the manual approval
+# gate; nothing is deployed automatically. Same shape as ResumeCreatorAddIn's
+# release.yml, minus the build and code-signing steps a Python script does not need.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing vX.Y.Z tag to rebuild (delete its draft release first)'
+        required: true
+
+permissions:
+  contents: write            # creates the draft GitHub Release
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: "Test & draft release"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          fetch-depth: 0                    # full history for the main-ancestry check
+
+      - name: Verify the tag is vX.Y.Z and its commit is on main
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || { echo "::error::Tag '$TAG' is not vX.Y.Z"; exit 1; }
+          git fetch origin main --quiet
+          git merge-base --is-ancestor HEAD origin/main \
+            || { echo "::error::Tag $TAG is not an ancestor of main; releases are cut from main only."; exit 1; }
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run the test suite
+        run: python -m unittest discover -s tests -v
+
+      - name: Package release assets
+        run: |
+          mkdir -p dist
+          git archive --format=zip --prefix="FollowEqualizer-$TAG/" \
+            -o "dist/FollowEqualizer-$TAG.zip" HEAD
+          # The checked-out commit, not $GITHUB_SHA: on a manual rebuild that is
+          # the dispatch ref's tip, and for annotated tags it is the tag object.
+          commit=$(git rev-parse HEAD)
+          cd dist
+          sha256sum "FollowEqualizer-$TAG.zip" > SHA256SUMS.txt
+          {
+            echo "Commit: $commit"
+            echo "Tag: $TAG"
+            echo "Runner image: ${ImageOS:-} ${ImageVersion:-}"
+            echo "Python: $(python --version)"
+          } > build-info.txt
+
+      - name: Create draft GitHub Release (publishing it is the manual gate)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$TAG" --draft --verify-tag --generate-notes \
+            --title "FollowEqualizer $TAG" \
+            "dist/FollowEqualizer-$TAG.zip" dist/SHA256SUMS.txt dist/build-info.txt
