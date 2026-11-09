@@ -208,11 +208,17 @@ The workflow at `.github/workflows/automation.yml`:
 - Writes a summary of every user followed or unfollowed to the job summary page.
 - Re-enables itself on every run. GitHub otherwise turns off scheduled workflows
   after 60 days without a commit to the repository.
+- **Runs the code on `main`.** The job checks out `main`, so changes to the
+  script or to `exclude_list.json` go live only after a `dev` → `main`
+  promotion; merging into `dev` is not a deployment. GitHub reads the workflow
+  *file* from the default branch (`dev`), so edits to the YAML itself apply as
+  soon as they land on `dev`. A manual run has a *ref* box: set it to `dev` with
+  *dry run* ticked to preview unpromoted code.
 
 Setup:
 
 1. Add the secret `FOLLOW_EQUALIZER_TOKEN` under Settings → Secrets and variables → Actions.
-2. Commit your `exclude_list.json`.
+2. Commit your `exclude_list.json` to `dev` and promote it to `main`.
 3. If the workflow shows as disabled in the Actions tab, enable it:
    ```bash
    gh workflow enable automation.yml

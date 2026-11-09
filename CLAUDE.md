@@ -14,7 +14,7 @@ Exceptions live in `exclude_list.json` at the repo root and are read by the GUI,
 - `dev` is the default branch, `main` is release-ready. Flow: feature → dev → main, every step a PR with a merge commit (squash disabled; never squash a promotion, it re-diverges `dev`). Merged branches auto-delete. `prod` was retired.
 - Rulesets (same shape as ResumeCreatorAddIn): "Protect dev" (strict: head must be up to date) and "Protect main" (non-strict) both require PR + green `Tests passed` check, no force-push or deletion; "Protect release tags" guards `v*`. `main` is non-strict on purpose: each promotion leaves `dev` one merge commit behind with identical content.
 - Promotion PR title: `Release vX.Y.Z` or `Promote ... to main`. Then `git tag -a vX.Y.Z -m "FollowEqualizer vX.Y.Z" && git push origin vX.Y.Z` on `main`; `release.yml` re-tests and creates a **draft** GitHub Release (source zip + SHA256SUMS). Publishing the draft is the manual gate.
-- Scheduled workflows run from `dev`; keep `dev` in sync with `main` or the schedule runs stale code.
+- `main` is the production gate: `automation.yml` checks out `main`, so script and `exclude_list.json` changes go live only after promotion. GitHub still reads the workflow *file* from the default branch `dev`, so YAML edits apply on merge to `dev`. Manual dispatch has a `ref` input (default `main`; `dev` + dry run to preview).
 - Actions must be referenced by full commit SHA (`uses: owner/repo@<sha> # vX.Y.Z`); the repo's "require SHA pinning" setting rejects tag refs. Dependabot bumps pins weekly.
 - `gh pr merge`, `gh api -X POST/PUT/DELETE`, `gh secret/variable set` and branch deletion are classifier-blocked for Claude: give the user the exact command to run with the `!` prefix.
 
