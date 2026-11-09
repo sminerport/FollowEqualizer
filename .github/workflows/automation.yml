@@ -49,7 +49,9 @@ jobs:
           ref: ${{ inputs.ref || 'main' }}   # scheduled runs have no inputs -> main
 
       - name: Show what is running
-        run: echo "ref=$(git rev-parse --abbrev-ref HEAD) commit=$(git rev-parse --short HEAD)"
+        env:
+          REQUESTED_REF: ${{ inputs.ref || 'main' }}   # checkout leaves a detached HEAD
+        run: echo "requested ref=$REQUESTED_REF commit=$(git rev-parse --short HEAD)"
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
