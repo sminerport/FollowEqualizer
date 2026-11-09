@@ -220,7 +220,8 @@ Setup:
 4. Do a manual *dry run* first from the Actions tab and read the summary.
 
 A second workflow, `.github/workflows/tests.yml`, runs the unit tests on every
-push and pull request on Python 3.10, 3.12 and 3.13.
+push and pull request on Python 3.10, 3.12 and 3.13. Its "Tests passed" job is
+the check the `dev` and `main` rulesets require before a PR can merge.
 
 ## Development
 
@@ -231,4 +232,25 @@ python -m unittest discover -s tests -v
 
 The tests use in-memory fakes for the GitHub API, so they need no token and make
 no network calls.
+
+### Branches and releases
+
+- `dev` is the default branch; `main` is release-ready. Everything enters both
+  through pull requests with a merge commit (squash is disabled), and merged
+  branches are deleted automatically.
+- Promote with a PR from `dev` into `main` titled `Release vX.Y.Z` (or
+  `Promote ... to main` when no release follows). Never squash a promotion.
+- Tag the new `main` tip to cut a release:
+
+  ```bash
+  git switch main && git pull --ff-only
+  git tag -a vX.Y.Z -m "FollowEqualizer vX.Y.Z"
+  git push origin vX.Y.Z
+  ```
+
+  `.github/workflows/release.yml` verifies the tag sits on `main`, re-runs the
+  tests, and creates a **draft** GitHub Release with a source zip and checksums.
+  Review it, then publish it from the Releases page or with
+  `gh release edit vX.Y.Z --draft=false`. That click is the manual gate.
+- Actions in the workflows are pinned to full commit SHAs; Dependabot bumps them weekly.
 

@@ -10,10 +10,13 @@ Exceptions live in `exclude_list.json` at the repo root and are read by the GUI,
 - `gh workflow run automation.yml --repo sminerport/FollowEqualizer -f dry_run=true -f follow_back=true -f unfollow_nonfollowers=true` - dispatch in Actions; always pass `--repo` when outside the checkout
 - `gh run list --workflow automation.yml --repo sminerport/FollowEqualizer` - check runs
 
-## Branching
-- `dev` is the default branch. A ruleset requires PRs into `dev` and `main`, no force-push or deletion. Flow: feature → dev → main.
+## Branching and releases
+- `dev` is the default branch, `main` is release-ready. Flow: feature → dev → main, every step a PR with a merge commit (squash disabled; never squash a promotion, it re-diverges `dev`). Merged branches auto-delete. `prod` was retired.
+- Rulesets (same shape as ResumeCreatorAddIn): "Protect dev" (strict: head must be up to date) and "Protect main" (non-strict) both require PR + green `Tests passed` check, no force-push or deletion; "Protect release tags" guards `v*`. `main` is non-strict on purpose: each promotion leaves `dev` one merge commit behind with identical content.
+- Promotion PR title: `Release vX.Y.Z` or `Promote ... to main`. Then `git tag -a vX.Y.Z -m "FollowEqualizer vX.Y.Z" && git push origin vX.Y.Z` on `main`; `release.yml` re-tests and creates a **draft** GitHub Release (source zip + SHA256SUMS). Publishing the draft is the manual gate.
 - Scheduled workflows run from `dev`; keep `dev` in sync with `main` or the schedule runs stale code.
-- Merge commits only (squash disabled); merged branches auto-delete.
+- Actions must be referenced by full commit SHA (`uses: owner/repo@<sha> # vX.Y.Z`); the repo's "require SHA pinning" setting rejects tag refs. Dependabot bumps pins weekly.
+- `gh pr merge`, `gh api -X POST/PUT/DELETE`, `gh secret/variable set` and branch deletion are classifier-blocked for Claude: give the user the exact command to run with the `!` prefix.
 
 ## Automation gotchas
 - Schedule is 09:00 UTC. Unfollow runs only if repo variable `SCHEDULE_UNFOLLOW=true` or ticked on a manual dispatch.
