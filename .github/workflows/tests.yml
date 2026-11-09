@@ -1,24 +1,38 @@
+# Unprivileged CI: pull-request and branch validation. No secrets, read-only token.
+# The "Tests passed" job is the single stable check name the rulesets require on
+# dev and main; it rolls up the Python-version matrix.
+# Actions are referenced by full commit SHA (the repo's "require SHA pinning"
+# setting rejects tag refs); .github/dependabot.yml bumps the pins weekly.
+
 name: Tests
 
 on:
-  push:
-    branches: [main, dev, prod]
   pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
+    name: "Test (Python ${{ matrix.python-version }})"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         python-version: ['3.10', '3.12', '3.13']
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -34,3 +48,16 @@ jobs:
 
       - name: exclude_list.json is valid
         run: python -c "import sys; sys.path.insert(0, 'src'); from exclusions import load_exclude_list; print(load_exclude_list('exclude_list.json'))"
+
+  tests-passed:
+    name: "Tests passed"        # stable, unique check name referenced by the rulesets
+    runs-on: ubuntu-latest
+    needs: test
+    if: always()
+    steps:
+      - name: Fail unless every matrix job succeeded
+        env:
+          RESULT: ${{ needs.test.result }}
+        run: |
+          echo "matrix result: $RESULT"
+          test "$RESULT" = "success"

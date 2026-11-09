@@ -1,0 +1,17 @@
+# Keeps the SHA-pinned actions in .github/workflows fresh: Dependabot bumps the
+# commit SHA and the trailing version comment together, preserving the pin format
+# that the repository's "require SHA pinning" setting enforces. PRs target the
+# default branch (dev) and are validated by "Tests passed", which needs no secrets.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
