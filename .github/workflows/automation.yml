@@ -4,9 +4,19 @@ name: FollowEqualizer Automation
 # when you ask for it: trigger the workflow manually and tick the box, or set a
 # repository variable SCHEDULE_UNFOLLOW=true to include it in scheduled runs.
 # Exceptions come from exclude_list.json at the repo root (commit it!).
+#
+# `main` is the gate: the job checks out `main`, so code and exclude_list.json
+# changes go live only after a dev -> main promotion. GitHub still reads this
+# workflow FILE from the default branch (dev), so edits to the YAML itself take
+# effect as soon as they land on dev. A manual run can target another ref
+# (e.g. `dev`) to dry-run unpromoted code.
 on:
   workflow_dispatch:
     inputs:
+      ref:
+        description: Branch or tag to run (default main; use dev to test unpromoted code)
+        type: string
+        default: main
       follow_back:
         description: Follow back users who follow you
         type: boolean
@@ -35,6 +45,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || 'main' }}   # scheduled runs have no inputs -> main
+
+      - name: Show what is running
+        run: echo "ref=$(git rev-parse --abbrev-ref HEAD) commit=$(git rev-parse --short HEAD)"
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
